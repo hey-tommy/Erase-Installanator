@@ -66,7 +66,7 @@ if [[ ! "$askForPassword" == 0 ]]; then
     echo Failed to provide the correct user password after 5 tries - exiting!
     echo
     exit 1
-fi
+fi  
 
 # Create a couple of random 16-bit hex strings to use as names for ephemeral password files.
 # Using a file instead echo'ing the password as obfuscation to mitigate password being easily
@@ -95,4 +95,4 @@ echo
 echo "$currentUserAccountPass" > /private/tmp/"$randomFileName2"   # Store password in file
 
 # Run eraseinstall process and delete ephemeral password file a second later
-(sleep 1; rm /private/tmp/"$randomFileName2") & sudo -S sh -c "cat /private/tmp/$randomFileName2 | /Volumes/Install\ macOS\ Big\ Sur/Install\ macOS\ Big\ Sur.app/Contents/Resources/startosinstall --eraseinstall --nointeraction --agreetolicense --forcequitapps --user $currentUserAccount --stdinpass"
+(sleep 1; rm /private/tmp/"$randomFileName2") & sudo sh -c "cat /private/tmp/$randomFileName2 | /Volumes/Install\ macOS\ Big\ Sur/Install\ macOS\ Big\ Sur.app/Contents/Resources/startosinstall --eraseinstall --nointeraction --agreetolicense --forcequitapps --user $currentUserAccount --stdinpass"
