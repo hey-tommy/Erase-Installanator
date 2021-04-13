@@ -1,5 +1,5 @@
 # Erase-Installanator
-Run eraseinstall from a USB stick with one-click &amp; a single password entry
+Run Big Sur eraseinstall from a USB stick with one-click &amp; a single password entry.
 
 This will allow you to use eraseinstall from a USB stick with a Big Sur installer just by double-clicking, typing in a password, and walking away like a bossss
 
