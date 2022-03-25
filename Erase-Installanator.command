@@ -1,23 +1,190 @@
 #!/bin/bash
 #
-# Erase-Installanator v1.0
+# Erase-Installanator v1.2
 #
-# This will allow you to use eraseinstall from a USB stick with a Big Sur installer
+# This will allow you to use eraseinstall from a USB stick with a Monterey installer
 # just by double-clicking, typing in a password, and walking away like a bossss
 #
-# Works on any Big Sur machine - including M1s!
+# Works on any Monterey machine - including M1s!
 #
 # It will capture the account password immediately and not make you wait the 3-5 mins
 # while it verifies the installer's integrity - because we all know you're going to start
 # the script, walk away, come back an hour later and facepalm at the --passprompt ;)
 #
-# Drop this into a .command file & throw it the root of a USB stick with a Big Sur installer.
+# Drop this into a .command file & throw it the root of a USB stick with a Monterey installer.
 # Double-cick .command file to run, type in the pass (validated immediately), and go do
 # something better with your time!
 
 
+# versionCompare Function
+#
+# Converts a versions into a numerically comparable number
+
+function versionCompare 
+{ 
+    # Parameter format:    versionCompare [version]
+
+    echo "$@" | awk -F. '{ printf("%d%03d%03d%03d\n", $1,$2,$3,$4); }'
+}
+
+
+# dialogOutput Function
+#
+# Displays an AppleScript dialog
+
+function dialogOutput ()
+{
+    # Parameter format:    dialogOutput [dialogText] 
+    #                        (optional: [iconName]) 
+    #                        (optional: [fallbackIcon]) 
+    #                        (optional: [buttonsList])   *** see below 
+    #                        (optional: [defaultButton]) 
+    #                        (optional: [dialogAppTitle]) 
+    #                        (optional: [dialogTimeout]) 
+    #                        (optional: [returnButtonClickedVarName]) 
+    #                        (optional: [returnValuesViaPipes] {bool}) 
+    #
+    #      *** Each button name should be double-quoted, then comma-delimited. 
+    #          Pass this entire parameter surrounded with single quotes. Also, 
+    #          while there is no way to have NO buttons in AppleScript dialogs, 
+    #          any button can be made blank by setting the button name to an empty 
+    #          string (i.e ""). Lastly, if this parameter is omitted entirely, 
+    #          the dialog will automatically get an OK and Cancel buttons. 
+    #
+    #      Note: function parameters are positional. If skipping an optional 
+    #      parameter, but not skipping the one that follows it, replace the 
+    #      skipped parameter with an empty string (i.e. "") 
+    
+
+    # Check dialog icon resources & prepare icon path for dialog
+
+    local dialogText="$1"
+    local dialogIcon
+    local iconPath
+
+    # shellcheck disable=2154
+    if [[ -n "$2" ]]; then
+        if [[ ("$2" != "note") && ("$2" != "caution") && ("$2" != "stop") ]]; then
+            if [[ -f "${2}" ]]; then
+                iconPath="${2}"
+            elif [[ -f "$scriptDirectory"/"${2}" ]]; then
+                iconPath="$scriptDirectory"/"${2}"
+            elif [[ -f "$scriptDirectory"/Resources/"${2}" ]]; then
+                iconPath="$scriptDirectory"/Resources/"${2}"
+            elif [[ -f "$(dirname "$scriptDirectory")"/Resources/"${2}" ]]; then
+                iconPath="$(dirname "$scriptDirectory")"/Resources/"${2}"
+            fi
+
+            if [[ -n "$iconPath" ]]; then
+                dialogIcon="with icon alias POSIX file \"$iconPath\""
+            elif [[ ("$3" == "note") || ("$3" == "caution") || ("$3" == "stop") ]]; then
+                dialogIcon="with icon $3"
+            else
+                dialogIcon="with icon note"
+            fi
+        else
+            dialogIcon="with icon $2"
+        fi
+    else
+        dialogIcon=""
+    fi
+
+    if [[ -n "$4" ]]; then
+        local dialogButtonsList="buttons {$4}"    
+        if [[ -n "$5" ]]; then
+            local dialogDefaultButton="default button \"$5\""; fi
+    fi
+
+    if [[ -n "$6" ]]; then
+        local dialogAppTitle="$6"; fi
+
+    if [[ -n "$7" ]]; then
+        local dialogTimeout="giving up after $7"; fi
+
+    local dialogContent
+    read -r -d '' dialogContent <<-EOF
+	display dialog "$dialogText" with title "$dialogAppTitle" $dialogButtonsList \
+	$dialogDefaultButton $dialogIcon $dialogTimeout
+	EOF
+
+    # Display dialog box
+    local dialogPID
+    local dialogReturned
+    local buttonClicked
+    
+    mkfifo /tmp/dialogReturned
+    exec 3<> /tmp/dialogReturned
+    unlink /tmp/dialogReturned
+    
+    launchctl asuser "$currentUserAccountUID" osascript -e "$dialogContent" 1>&3 \
+    & dialogPID=$!
+    
+    # Return dialog PID immediately, if requested
+    if [[ -n "$9" ]]; then
+        echo "$dialogPID" 1>&5
+    fi
+    read -r -u3 dialogReturned
+    exec 3>&-
+    
+    buttonClicked="$(echo "$dialogReturned" \
+                   | sed -E 's/^button returned:(, )?(.*)$/\2/')"
+    
+    # Return button clicked, if requested
+    if [[ -n "$9" ]]; then
+        echo "$buttonClicked" 1>&6
+    elif [[ -n "$8" ]]; then
+        export -n "${8}"="$buttonClicked"
+    fi
+}
+
+
+# checkArchMacOSVersion Function
+#
+# Verifies that macOS version is compatible with tool
+
+function checkArchMacOSVersion ()
+{
+    # Parameter format: none
+    
+    if [[ $(versionCompare "$(sw_vers -productVersion)") \
+      -lt $(versionCompare "11.5") && $(uname -m) == "arm64" ]]; then
+
+        dialogOutput \
+            "Since this is an Apple Silicon Mac, and its macOS version is older `
+            `than 11.5, eraseinstall is not possible.\n\n`
+            `It is recommended to instead let this tool first upgrade this Mac `
+            `to macOS 12 (Monterey), then use Monterey's built-in Erase All `
+            `Content and Settings feature to wipe.\n\n" \
+            "caution" \
+            "" \
+            '"Upgrade to macOS 12 without wiping","Exit"' \
+            "Upgrade to macOS 12 without wiping" \
+            "Eraseinstall not possible - upgrade without wiping?" \
+            "" \
+            "upgradeOrExit" 
+
+            # shellcheck disable=2154
+            if [[ "$upgradeOrExit" != 'Upgrade to macOS 12 without wiping' ]]; then
+    	        exit 1
+            else
+    	        upgradeOnly=1
+            fi
+
+    fi
+}
+
+
 # Determine current logged-in user account
+# shellcheck disable=2012
 currentUserAccount="$(ls -la /dev/console | cut -d " " -f 4)"
+
+# Determine UID
+currentUserAccountUID=$(dscl . -read "/Users/$currentUserAccount" UniqueID | awk '{print $2}')
+
+# Determine currently connected WiFi SSID
+connectedSSID=$(/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I | awk -F:  '($1 ~ "^ *SSID$"){print $2}' | cut -c 2-)
+
+checkArchMacOSVersion
 
 # Exit if current logged-in user is non-admin
 if dseditgroup -o checkmember -m "$currentUserAccount" admin|grep -q -w ^no; then
@@ -47,9 +214,6 @@ return dialogText
 EOF
     fi
 
-    # Determine UID
-    currentUserAccountUID=$(dscl . -read "/Users/$currentUserAccount" UniqueID | awk '{print $2}')
-
     # Display capture password dialog box
     currentUserAccountPass="$(/bin/launchctl asuser "$currentUserAccountUID" osascript -e "$applescriptCode")"
 
@@ -68,31 +232,52 @@ if [[ ! "$askForPassword" == 0 ]]; then
     exit 1
 fi  
 
-# Create a couple of random 16-bit hex strings to use as names for ephemeral password files.
-# Using a file instead echo'ing the password as obfuscation to mitigate password being easily
-# visible via ps. Making a point of keeping file names random and storing them for the least
-# amount of time possible.
-
-randomFileName1=$(xxd -l 16 -c 16 -p < /dev/random)
-randomFileName2=$(xxd -l 16 -c 16 -p < /dev/random)
-
 # Cache sudo token before running startosinstall to avoid having an ugly "Password:" string
 # inserted in the beginning of startosinstall's output if piping directly into that command
 # (hiding it via redirection of stderr would unfortunately hide any errors - and we all know
 # eraseinstall is riddled with issues on M1s - so we def want that stderr untouched.
 
-echo "$currentUserAccountPass" > /private/tmp/"$randomFileName1"   # Store password in file
-cat /private/tmp/"$randomFileName1" | sudo -S echo > /dev/null 2>&1   # Cache sudo token
-rm  /private/tmp/"$randomFileName1"   # Delete password file
+echo "$currentUserAccountPass" | sudo -S echo > /dev/null 2>&1   # Cache sudo token
 
-echo
-echo Please wait 3-5 minutes while the macOS Big Sur installer integrity is verified.
-echo
-echo
-echo Verifying macOS installer integrity...
-echo 
+if [[ "upgradeOnly" -ne 1 ]]; then
 
-echo "$currentUserAccountPass" > /private/tmp/"$randomFileName2"   # Store password in file
+    echo
+    echo Preparing for eraseinstall process...
+    echo
 
-# Run eraseinstall process and delete ephemeral password file a second later
-(sleep 1; rm /private/tmp/"$randomFileName2") & sudo sh -c "cat /private/tmp/$randomFileName2 | /Volumes/Install\ macOS\ Big\ Sur/Install\ macOS\ Big\ Sur.app/Contents/Resources/startosinstall --eraseinstall --nointeraction --agreetolicense --forcequitapps --user $currentUserAccount --stdinpass"
+    echo
+    echo "Forgetting current WiFi network ($connectedSSID)"
+    echo "(and disconnecting from it in 15 minutes)..."
+    echo
+    (sleep 900 && networksetup -setnetworkserviceenabled Wi-Fi off && networksetup -setnetworkserviceenabled Wi-Fi on ) & sudo networksetup -removepreferredwirelessnetwork en0 "$connectedSSID"
+    sudo nvram -c &> /dev/null    
+    echo
+
+    echo
+    echo Please wait 3-5 minutes while the macOS installer integrity is verified.
+    echo
+    echo
+    echo Verifying macOS installer integrity...
+    echo 
+
+	# Run eraseinstall process
+	sudo sh -c "echo $currentUserAccountPass | /Volumes/Install\ macOS\ Monterey/Install\ macOS\ Monterey.app/Contents/Resources/startosinstall --eraseinstall --nointeraction --agreetolicense --forcequitapps --user $currentUserAccount --stdinpass"
+
+else
+
+    echo
+    echo Preparing for upgrade-only process...
+    echo
+
+    echo
+    echo Please wait 3-5 minutes while the macOS installer integrity is verified.
+    echo
+    echo
+    echo Verifying macOS installer integrity...
+    echo 
+
+	# Run upgrade process
+	sudo sh -c "echo $currentUserAccountPass | /Volumes/Install\ macOS\ Monterey/Install\ macOS\ Monterey.app/Contents/Resources/startosinstall --nointeraction --agreetolicense --forcequitapps --user $currentUserAccount --stdinpass"
+
+fi
+
